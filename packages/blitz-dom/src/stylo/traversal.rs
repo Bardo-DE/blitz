@@ -40,17 +40,7 @@ impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         style::thread_state::enter(ThreadState::LAYOUT);
 
-        let guard = &self.guard;
-        let guards = StylesheetGuards {
-            author: &guard.read(),
-            ua_or_user: &guard.read(),
-        };
-
-        let root = BlitzNode(self.nodes[self.root_node_id].first_element_child().unwrap());
-
-        self.stylist
-            .flush(&guards)
-            .process_style(root, Some(&self.snapshots));
+        self.flush_stylist();
 
         // Mark actively animating nodes as dirty
         let mut sets = self.animations.sets.write();
@@ -97,6 +87,77 @@ impl crate::document::BaseDocument {
         }
         drop(sets);
 
+        self.traverse_styles(now);
+
+        // A restyle that cancels an animation or transition (for example by
+        // removing `animation-name`) cascades the animated value it had at that
+        // moment, because rule matching runs before Stylo marks it cancelled.
+        // Once the cancelled entry is gone nothing would restyle the element
+        // again, leaving that stale value in place. Restyle those elements now.
+        if self.restyle_elements_with_changed_animations() {
+            self.traverse_styles(now);
+        }
+
+        let mut sets = self.animations.sets.write();
+        for set in sets.values_mut() {
+            set.clear_canceled_animations();
+            for animation in set.animations.iter_mut() {
+                animation.is_new = false;
+            }
+            for transition in set.transitions.iter_mut() {
+                transition.is_new = false;
+            }
+        }
+        let mut finished = Vec::new();
+        sets.retain(|key, state| {
+            let keep = !state.is_empty();
+            if !keep {
+                finished.push(key.node);
+            }
+            keep
+        });
+        // Clear `may_have_animations` on elements whose last set (including
+        // their pseudo-elements' sets) was just removed.
+        for node in finished {
+            if sets.keys().any(|key| key.node == node) {
+                continue;
+            }
+            let node_id = NodeId::from_u64(node.id() as u64);
+            if let Some(data) = self.nodes.get(node_id).and_then(|node| node.element_data()) {
+                data.may_have_animations.store(false, Ordering::Relaxed);
+            }
+        }
+        self.has_active_animations = sets.values().any(|state| state.needs_animation_ticks());
+
+        // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
+        self.stylist.rule_tree().maybe_gc();
+
+        style::thread_state::exit(ThreadState::LAYOUT);
+    }
+
+    /// Flush stylesheet changes into the stylist.
+    fn flush_stylist(&mut self) {
+        let guard = &self.guard;
+        let guards = StylesheetGuards {
+            author: &guard.read(),
+            ua_or_user: &guard.read(),
+        };
+
+        let root = BlitzNode(self.nodes[self.root_node_id].first_element_child().unwrap());
+
+        self.stylist
+            .flush(&guards)
+            .process_style(root, Some(&self.snapshots));
+    }
+
+    /// Run the Stylo traversal over every element with a pending restyle.
+    fn traverse_styles(&mut self, now: f64) {
+        let guard = &self.guard;
+        let guards = StylesheetGuards {
+            author: &guard.read(),
+            ua_or_user: &guard.read(),
+        };
+
         // Build the style context used by the style traversal
         let context = SharedStyleContext {
             traversal_flags: TraversalFlags::empty(),
@@ -142,42 +203,40 @@ impl crate::document::BaseDocument {
             }
         }
         self.snapshots.clear();
+    }
 
+    /// Drop cancelled animations and transitions, and mark every element whose
+    /// animation set changed (Stylo's `ElementAnimationSet::dirty`, or a
+    /// cancelled entry) for a restyle. Returns whether any element was marked.
+    fn restyle_elements_with_changed_animations(&mut self) -> bool {
         let mut sets = self.animations.sets.write();
-        for set in sets.values_mut() {
-            set.clear_canceled_animations();
-            for animation in set.animations.iter_mut() {
-                animation.is_new = false;
-            }
-            for transition in set.transitions.iter_mut() {
-                transition.is_new = false;
-            }
-        }
-        let mut finished = Vec::new();
-        sets.retain(|key, state| {
-            let keep = !state.is_empty();
-            if !keep {
-                finished.push(key.node);
-            }
-            keep
-        });
-        // Clear `may_have_animations` on elements whose last set (including
-        // their pseudo-elements' sets) was just removed.
-        for node in finished {
-            if sets.keys().any(|key| key.node == node) {
+        let mut restyled = false;
+        for (key, set) in sets.iter_mut() {
+            let has_cancelled = set
+                .animations
+                .iter()
+                .any(|animation| animation.state == AnimationState::Canceled)
+                || set
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.state == AnimationState::Canceled);
+            if !set.dirty && !has_cancelled {
                 continue;
             }
-            let node_id = NodeId::from_u64(node.id() as u64);
-            if let Some(data) = self.nodes.get(node_id).and_then(|node| node.element_data()) {
-                data.may_have_animations.store(false, Ordering::Relaxed);
+            set.clear_canceled_animations();
+            set.dirty = false;
+
+            let node_id = NodeId::from_u64(key.node.id() as u64);
+            if let Some(node) = self
+                .nodes
+                .get_mut(node_id)
+                .filter(|node| node.flags.is_in_document())
+            {
+                node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+                restyled = true;
             }
         }
-        self.has_active_animations = sets.values().any(|state| state.needs_animation_ticks());
-
-        // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
-        self.stylist.rule_tree().maybe_gc();
-
-        style::thread_state::exit(ThreadState::LAYOUT);
+        restyled
     }
 
     /// Compute the style of an element which the regular style traversal
