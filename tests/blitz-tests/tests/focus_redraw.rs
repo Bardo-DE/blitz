@@ -60,6 +60,7 @@ fn node_id(doc: &HtmlDocument, selector: &str) -> NodeId {
 fn tab_key_event() -> BlitzKeyEvent {
     BlitzKeyEvent {
         key: Key::Named(NamedKey::Tab),
+        key_without_modifiers: Key::Named(NamedKey::Tab),
         code: Code::Tab,
         modifiers: Modifiers::empty(),
         location: Location::Standard,

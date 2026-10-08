@@ -45,18 +45,41 @@ pub(crate) fn winit_key_event_to_blitz(
     event: &WinitKeyEvent,
     mods: WinitModifiers,
 ) -> BlitzKeyEvent {
+    let key = winit_key_to_kbt_key(&event.logical_key);
+    let state = match event.state {
+        ElementState::Pressed => KeyState::Pressed,
+        ElementState::Released => KeyState::Released,
+    };
     BlitzKeyEvent {
-        key: winit_key_to_kbt_key(&event.logical_key),
+        modifiers: modifiers_at_key_event(winit_modifiers_to_kbt_modifiers(mods), &key, state),
+        key,
+        key_without_modifiers: winit_key_to_kbt_key(&event.key_without_modifiers),
         code: winit_physical_key_to_kbt_code(&event.physical_key),
-        modifiers: winit_modifiers_to_kbt_modifiers(mods),
         location: event.location,
         is_auto_repeating: event.repeat,
         is_composing: false,
-        state: match event.state {
-            ElementState::Pressed => KeyState::Pressed,
-            ElementState::Released => KeyState::Released,
-        },
+        state,
         text: event.text.clone(),
+    }
+}
+
+/// The modifiers current at a key event.
+///
+/// winit reports `ModifiersChanged` after the key event of a modifier key itself, so
+/// the tracked state lags by one event: a Shift press would arrive without Shift and
+/// its release with it. A modifier key's own bit is set on press and cleared on release.
+fn modifiers_at_key_event(tracked: Modifiers, key: &Key, state: KeyState) -> Modifiers {
+    #[allow(deprecated)] // `Super` is the legacy name of `Meta`
+    let own = match key {
+        Key::Named(NamedKey::Shift) => Modifiers::SHIFT,
+        Key::Named(NamedKey::Control) => Modifiers::CONTROL,
+        Key::Named(NamedKey::Alt) => Modifiers::ALT,
+        Key::Named(NamedKey::Meta | NamedKey::Super) => Modifiers::META,
+        _ => return tracked,
+    };
+    match state {
+        KeyState::Pressed => tracked | own,
+        KeyState::Released => tracked - own,
     }
 }
 
@@ -170,5 +193,39 @@ pub(crate) fn winit_key_to_kbt_key(winit_key: &WinitKey) -> Key {
         WinitKey::Character(c) => Key::Character(c.to_string()),
         WinitKey::Unidentified(_) => Key::Named(NamedKey::Unidentified),
         WinitKey::Dead(_) => Key::Named(NamedKey::Dead),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_modifier_press_carries_its_own_bit() {
+        let key = Key::Named(NamedKey::Shift);
+        let mods = modifiers_at_key_event(Modifiers::empty(), &key, KeyState::Pressed);
+        assert_eq!(mods, Modifiers::SHIFT);
+    }
+
+    #[test]
+    fn a_modifier_release_drops_its_own_bit_and_keeps_the_others() {
+        let held = Modifiers::SHIFT | Modifiers::CONTROL;
+        let key = Key::Named(NamedKey::Shift);
+        let mods = modifiers_at_key_event(held, &key, KeyState::Released);
+        assert_eq!(mods, Modifiers::CONTROL);
+    }
+
+    #[test]
+    fn an_ordinary_key_keeps_the_tracked_modifiers() {
+        let key = Key::Named(NamedKey::Enter);
+        let mods = modifiers_at_key_event(Modifiers::ALT, &key, KeyState::Pressed);
+        assert_eq!(mods, Modifiers::ALT);
+    }
+
+    #[test]
+    fn meta_sets_the_meta_bit() {
+        let key = Key::Named(NamedKey::Meta);
+        let mods = modifiers_at_key_event(Modifiers::empty(), &key, KeyState::Pressed);
+        assert_eq!(mods, Modifiers::META);
     }
 }

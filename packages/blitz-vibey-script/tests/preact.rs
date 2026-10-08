@@ -56,6 +56,7 @@ fn text_of(doc: &ScriptDocument, node_id: NodeId) -> String {
 fn enter_key() -> BlitzKeyEvent {
     BlitzKeyEvent {
         key: Key::Named(NamedKey::Enter),
+        key_without_modifiers: Key::Named(NamedKey::Enter),
         code: Code::Enter,
         modifiers: Modifiers::empty(),
         location: Location::Standard,
