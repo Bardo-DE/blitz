@@ -177,6 +177,18 @@ impl DioxusDocument {
         }
     }
 
+    /// Deliver focus events raised by moving focus from code
+    fn flush_pending_events(&mut self) {
+        if !self.inner.borrow().has_pending_events() {
+            return;
+        }
+        let handler = DioxusEventHandler {
+            vdom: &mut self.vdom,
+            vdom_state: &mut self.vdom_state,
+        };
+        EventDriver::new(&mut self.inner, handler).flush_pending_events();
+    }
+
     pub(crate) fn flush_queued_mounted_events(&mut self) {
         let mut queued_mounted_events = mem::take(&mut self.vdom_state.queued_mounted_events);
         for element_id in queued_mounted_events.drain(..) {
@@ -228,6 +240,7 @@ impl Document for DioxusDocument {
         // Poll any sub-documents, which may have pending async operations of
         // their own (e.g. JavaScript timers)
         let subdoc_changes = self.inner.borrow_mut().poll_subdocuments(Some(&waker));
+        self.flush_pending_events();
 
         // Dispatch events queued on the document since it was last driven, before running
         // the vdom so that it picks up any work their handlers schedule.
@@ -251,6 +264,7 @@ impl Document for DioxusDocument {
         self.vdom_state
             .apply_buffered_mutations(&mut self.inner.borrow_mut());
         self.flush_queued_mounted_events();
+        self.flush_pending_events();
 
         // Applying mutations and running mounted handlers can queue events (e.g. focus
         // events from a mounted handler calling `set_focus`). Their handlers may leave the

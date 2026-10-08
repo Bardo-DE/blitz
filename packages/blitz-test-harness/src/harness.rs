@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
-use blitz_dom::{DocGuard, DocGuardMut, Document, DocumentConfig};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use blitz_dom::{
+    DocGuard, DocGuardMut, Document, DocumentConfig, EventDriver, EventHandler, NodeId,
+    NoopEventHandler,
+};
 use blitz_html::{HtmlDocument, HtmlProvider};
-use blitz_traits::events::UiEvent;
+use blitz_traits::events::{DomEvent, EventState, UiEvent};
 use blitz_traits::net::NetProvider;
 use blitz_traits::shell::{ColorScheme, Viewport};
 use dioxus_core::{Element, VirtualDom};
@@ -136,37 +142,27 @@ impl<D: Document> Harness<D> {
     /// so document-specific event handling (e.g. forwarding to a Dioxus VirtualDom) is
     /// bypassed. Does not [`pump`](Self::pump).
     pub fn dispatch_recorded(&mut self, events: impl IntoIterator<Item = UiEvent>) -> Vec<String> {
-        use blitz_dom::{EventDriver, EventHandler, NoopEventHandler};
-        use blitz_traits::events::{DomEvent, EventState};
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        self.dispatch_recorded_chains(events)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
 
-        #[derive(Clone, Default)]
-        struct RecordingHandler {
-            events: Rc<RefCell<Vec<String>>>,
-        }
-
-        impl EventHandler for RecordingHandler {
-            fn handle_event(
-                &mut self,
-                _chain: &[blitz_traits::node_id::NodeId],
-                event: &mut DomEvent,
-                _doc: &mut dyn Document,
-                _event_state: &mut EventState,
-            ) {
-                self.events.borrow_mut().push(event.name().to_string());
-            }
-        }
-
+    /// Like [`dispatch_recorded`](Self::dispatch_recorded), also recording each event's
+    /// propagation chain (target first, then its ancestors, for a bubbling event).
+    pub fn dispatch_recorded_chains(
+        &mut self,
+        events: impl IntoIterator<Item = UiEvent>,
+    ) -> Vec<Recorded> {
         let mut doc = self.doc.inner_mut();
 
         // Events queued before this call (e.g. the focus events of an autofocused element)
         // are not part of the recording
         EventDriver::new(&mut *doc, NoopEventHandler).flush_pending_events();
 
-        let handler = RecordingHandler::default();
-        let recorded = handler.events.clone();
-        let mut driver = EventDriver::new(&mut *doc, handler);
+        let recorder = Recorder::default();
+        let recorded = recorder.events.clone();
+        let mut driver = EventDriver::new(&mut *doc, recorder);
         for event in events {
             driver.handle_ui_event(event);
         }
@@ -186,5 +182,28 @@ impl<D: Document> Harness<D> {
         ));
         drop(doc);
         self.pump();
+    }
+}
+
+/// An [`EventHandler`] that records the name and chain of every event.
+#[derive(Clone, Default)]
+struct Recorder {
+    events: Rc<RefCell<Vec<Recorded>>>,
+}
+
+/// An event's name and its propagation chain.
+type Recorded = (String, Vec<NodeId>);
+
+impl EventHandler for Recorder {
+    fn handle_event(
+        &mut self,
+        chain: &[NodeId],
+        event: &mut DomEvent,
+        _doc: &mut dyn Document,
+        _event_state: &mut EventState,
+    ) {
+        self.events
+            .borrow_mut()
+            .push((event.name().to_string(), chain.to_vec()));
     }
 }
