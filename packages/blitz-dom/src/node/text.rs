@@ -6,7 +6,7 @@ use blitz_traits::{
 use keyboard_types::{Key, Modifiers, NamedKey};
 use parley::{ContentWidths, FontContext, InlineBoxKind, LayoutContext};
 
-use crate::util::ACTION_MOD;
+use crate::util::is_action;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Parley Brush type for Blitz which contains the Blitz node id
@@ -246,7 +246,7 @@ impl TextInputData {
 
         let mods = event.modifiers;
         let shift = mods.contains(Modifiers::SHIFT);
-        let action_mod = mods.contains(ACTION_MOD);
+        let action_mod = is_action(mods);
 
         let is_multiline = self.is_multiline;
         let editor = &mut self.editor;
