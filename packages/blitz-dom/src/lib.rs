@@ -64,6 +64,7 @@ mod stylo;
 mod stylo_to_cursor_icon;
 mod stylo_to_kurbo;
 mod stylo_to_parley;
+mod text_action;
 pub mod traversal;
 /// Versioned storage for the nodes of the DOM tree.
 mod tree;
@@ -104,6 +105,7 @@ pub use node::{Attribute, DocumentData, ElementData, Node, NodeData, TextNodeDat
 pub use parley::FontContext;
 pub use scrolling::{ScrollBehavior, ScrollLogicalPosition};
 pub use stylo::UserAgentStylesheet;
+pub use text_action::{DefaultTextActionResolver, TextAction, TextActionResolver};
 pub use tree::NodeTree;
 
 /// Convert a Blitz [`NodeId`] into a [`taffy::NodeId`] (which wraps a `u64`).

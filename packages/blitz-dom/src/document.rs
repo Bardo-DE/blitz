@@ -17,8 +17,9 @@ use crate::traversal::TreeTraverser;
 use crate::url::DocumentUrl;
 use crate::util::ImageType;
 use crate::{
-    DocumentConfig, DocumentMutator, DummyHtmlParserProvider, ElementData, EventDriver,
-    HtmlParserProvider, Node, NodeData, NoopEventHandler, StyleThreading, TextNodeData,
+    DefaultTextActionResolver, DocumentConfig, DocumentMutator, DummyHtmlParserProvider,
+    ElementData, EventDriver, HtmlParserProvider, Node, NodeData, NoopEventHandler, StyleThreading,
+    TextActionResolver, TextNodeData,
 };
 use bitflags::bitflags;
 use blitz_traits::devtools::DevtoolSettings;
@@ -361,6 +362,8 @@ pub struct BaseDocument {
     pub navigation_provider: Arc<dyn NavigationProvider>,
     /// Shell provider. Can be used to request a redraw or set the cursor icon
     pub shell_provider: Arc<dyn ShellProvider>,
+    /// Resolver mapping key chords to text-editing actions
+    pub text_action_resolver: Arc<dyn TextActionResolver>,
     /// HTML parser provider. Used to parse HTML for setInnerHTML
     pub html_parser_provider: Arc<dyn HtmlParserProvider>,
     /// Carried on every sub-resource `Request` this document issues; aborting
@@ -458,6 +461,9 @@ impl BaseDocument {
         let shell_provider = config
             .shell_provider
             .unwrap_or_else(|| Arc::new(DummyShellProvider));
+        let text_action_resolver = config
+            .text_action_resolver
+            .unwrap_or_else(|| Arc::new(DefaultTextActionResolver));
         let html_parser_provider = config
             .html_parser_provider
             .unwrap_or_else(|| Arc::new(DummyHtmlParserProvider));
@@ -521,6 +527,7 @@ impl BaseDocument {
             net_provider,
             navigation_provider,
             shell_provider,
+            text_action_resolver,
             html_parser_provider,
             abort_signal: config.abort_signal,
             #[cfg(feature = "devtools")]
@@ -602,6 +609,11 @@ impl BaseDocument {
     #[cfg(feature = "devtools")]
     pub fn set_devtools_title(&mut self, title: Option<String>) {
         self.devtools_title = title;
+    }
+
+    /// Set the Document's text action resolver
+    pub fn set_text_action_resolver(&mut self, text_action_resolver: Arc<dyn TextActionResolver>) {
+        self.text_action_resolver = text_action_resolver;
     }
 
     /// Set the Document's html parser provider
