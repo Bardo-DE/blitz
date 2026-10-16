@@ -9,6 +9,7 @@ use blitz_traits::events::{BlitzDragOperation, DomEvent, DomEventData, PointerCo
 pub use driver::{EventDriver, EventHandler, NoopEventHandler};
 pub(crate) use ime::handle_ime_event;
 use keyboard::{KeyboardOrTextInputEvent, handle_key_or_input_event};
+use keyboard_types::{Key, NamedKey};
 pub(crate) use pointer::DragMode;
 use pointer::{
     handle_click, handle_pointerdown, handle_pointermove, handle_pointerup, record_pointerdown,
@@ -140,6 +141,12 @@ fn ends_after_forwarding(data: &DomEventData) -> bool {
     )
 }
 
+/// Tab is not forwarded to a sub-document: it moves the focus through the sub-document's
+/// focussable nodes and on past them, which only the host document's traversal can do.
+fn is_tab_keydown(data: &DomEventData) -> bool {
+    matches!(data, DomEventData::KeyDown(event) if event.key == Key::Named(NamedKey::Tab))
+}
+
 pub(crate) fn handle_dom_event(
     doc: &mut BaseDocument,
     event: &mut DomEvent,
@@ -194,7 +201,7 @@ pub(crate) fn handle_dom_event(
     };
 
     // Handle event forwarding for sub-document
-    if let Some(sub_doc) = node.subdoc_mut() {
+    if let Some(sub_doc) = node.subdoc_mut().filter(|_| !is_tab_keydown(&event.data)) {
         let viewport_scroll = sub_doc.inner().viewport_scroll();
 
         let set_focus = matches!(
