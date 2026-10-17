@@ -9,6 +9,7 @@ mod node;
 pub(crate) mod scrollbar;
 mod serialize;
 mod stylo_data;
+mod surrounding_text;
 #[cfg(feature = "svg")]
 mod svg;
 mod text;
@@ -27,6 +28,7 @@ pub use element::{
 pub use node::*;
 pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
 pub use stylo_data::ComputedStyleRef;
+pub use surrounding_text::{SURROUNDING_TEXT_MAX_BYTES, SurroundingText};
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 pub use text::{GeneratedTextInputEvent, INLINE_BOX_CHAR, TextBrush, TextInputData, TextLayout};
