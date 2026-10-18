@@ -167,6 +167,11 @@ pub(crate) fn handle_dom_event(
             // action.
             DomEventData::PointerDown(data) => {
                 record_pointerdown(doc, data.page_x(), data.page_y());
+                // A press whose default action was cancelled (`pointerdown` +
+                // `preventDefault`, as a menu item does) starts no selection and no drag: a
+                // move with the button held must not turn it into a text selection, which
+                // would take the click away from the item.
+                doc.mousedown_node_id = None;
             }
             DomEventData::PointerUp(data) => {
                 handle_pointerup(doc, event.target, data, true);
