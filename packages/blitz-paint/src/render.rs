@@ -427,6 +427,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     },
                     node.id,
                     &mut self.draw_text_context.borrow_mut(),
+                    None,
                 );
             }
         }
@@ -1062,6 +1063,20 @@ impl ElementCx<'_, '_> {
                 );
             }
 
+            // The `text-overflow` cut is fixed at layout time for unscrolled content, so a
+            // horizontally scrolled container shows its full text instead.
+            // TODO: move the cut with the scroll offset.
+            let is_scrolled = |node_id: NodeId| {
+                self.context
+                    .dom
+                    .get_node(node_id)
+                    .is_some_and(|node| node.scroll_offset().x != 0.0)
+            };
+            let text_overflow = text_layout.text_overflow.as_ref().filter(|_| {
+                !is_scrolled(self.node.id)
+                    && !(self.node.is_anonymous() && self.node.parent.is_some_and(is_scrolled))
+            });
+
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             crate::text::stroke_text(
@@ -1075,6 +1090,7 @@ impl ElementCx<'_, '_> {
                 },
                 self.node.id,
                 &mut draw_text_context,
+                text_overflow,
             );
         }
     }
@@ -1147,6 +1163,7 @@ impl ElementCx<'_, '_> {
                 },
                 self.node.id,
                 &mut draw_text_context,
+                None,
             );
         }
     }
@@ -1206,6 +1223,7 @@ impl ElementCx<'_, '_> {
                 },
                 self.node.id,
                 &mut draw_text_context,
+                None,
             );
         }
     }

@@ -685,10 +685,15 @@ pub(crate) fn draw_line_text_shadows(
                         .is_some_and(|list| Arc::ptr_eq(list, shadow_list))
                 })
                 .count();
-        let batch = || glyph_runs(line).skip(start).take(end - start);
+        let batch = || {
+            glyph_runs(line)
+                .zip(run_records.iter())
+                .skip(start)
+                .take(end - start)
+        };
 
         let glyph_bounds = batch()
-            .map(|run| glyph_run_rect(&run))
+            .map(|(run, _)| glyph_run_rect(&run))
             .reduce(|a, b| a.union(b))
             .unwrap_or(Rect::ZERO);
         // Decorations drawn under these runs are shadowed with them, clipped to the runs'
@@ -732,8 +737,8 @@ pub(crate) fn draw_line_text_shadows(
             }
 
             let shadow_transform = transform * Affine::translate(shadow.offset);
-            for run in batch() {
-                draw_glyph_run(scene, &run, shadow.color, shadow_transform);
+            for (run, record) in batch() {
+                draw_glyph_run(scene, &run, shadow.color, shadow_transform, record.glyphs);
             }
             if has_decorations {
                 flush_line_decorations(
