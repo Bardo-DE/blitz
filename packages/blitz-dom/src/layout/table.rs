@@ -71,6 +71,9 @@ pub struct TableCell {
     /// Index of the column the cell originates in
     pub column: u16,
     style: taffy::Style<Atom>,
+    /// Whether the cell's own `width` is its column's preferred width rather than its size,
+    /// so that it is measured by its content (see `collect_table_cells`).
+    sized_by_column: bool,
 }
 
 /// Tracks the current column position while walking the table's cells, so that
@@ -638,6 +641,7 @@ fn collect_table_cells(
                 .unwrap_or(1);
             let mut style = table_taffy_style(stylo_style, wm);
             let col = cursor.next_free();
+            let mut sized_by_column = false;
 
             // In the collapsed borders model the borders are laid out as gutters between
             // the cells (see the table's `gap`) rather than as part of the cells
@@ -665,11 +669,25 @@ fn collect_table_cells(
                         let len = style.size.width.value();
                         let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
                         let border = style.border.resolve_or_zero(None, resolve_calc_value);
-                        match style.box_sizing {
-                            taffy::BoxSizing::ContentBox => style_helpers::length(
-                                len + padding.left + padding.right + border.left + border.right,
-                            ),
-                            taffy::BoxSizing::BorderBox => style_helpers::length(len),
+                        let width = match style.box_sizing {
+                            taffy::BoxSizing::ContentBox => {
+                                len + padding.left + padding.right + border.left + border.right
+                            }
+                            taffy::BoxSizing::BorderBox => len,
+                        };
+                        // In the automatic table layout algorithm a cell's width is its
+                        // column's width unless the cell's content cannot fit in it: the column
+                        // is the larger of the two, the width given growing to the cell's
+                        // min-content width. So the cell is measured by its content, not by its
+                        // width (which the node's own style still has), and fills its column.
+                        if is_fixed || colspan != 1 {
+                            style_helpers::length(width)
+                        } else {
+                            sized_by_column = true;
+                            style_helpers::minmax(
+                                style_helpers::length(width),
+                                style_helpers::min_content(),
+                            )
                         }
                     }
                     taffy::CompactLength::PERCENT_TAG => {
@@ -735,6 +753,7 @@ fn collect_table_cells(
                 row: row.saturating_sub(1),
                 column: col,
                 style,
+                sized_by_column,
             });
 
             cursor.place(colspan, rowspan);
@@ -823,6 +842,11 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
     ) -> taffy::LayoutOutput {
         let cell = &self.ctx.cells[usize::from(node_id)];
         let node_id = crate::taffy_node_id(cell.node_id);
+        let mut inputs = inputs;
+        // Measured for its column: by its content, as its own width is the column's to apply.
+        if cell.sized_by_column && inputs.known_dimensions.width.is_none() {
+            inputs.sizing_mode = taffy::SizingMode::ContentSize;
+        }
         self.doc.compute_child_layout(node_id, inputs)
     }
 }
