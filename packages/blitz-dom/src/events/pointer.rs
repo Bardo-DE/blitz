@@ -7,7 +7,7 @@ use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use blitz_traits::{
     events::{
         BlitzInputEvent, BlitzPointerEvent, BlitzPointerId, DomEventData, MouseEventButton,
-        MouseEventButtons,
+        MouseEventButtons, UiEvent,
     },
     navigation::NavigationOptions,
 };
@@ -226,6 +226,27 @@ pub(crate) fn handle_pointermove(
 
     let mut changed = doc.set_hover_to(x, y);
 
+    // A selection drag (primary button down) scrolls the container it nears the edge of; see
+    // `selection_autoscroll`. One that started in a sub-document goes on in it while the pointer
+    // is outside the frame, where the frame gets no events of its own.
+    let primary_held = buttons.contains(MouseEventButtons::Primary)
+        && matches!(event.id, BlitzPointerId::Mouse | BlitzPointerId::Pen);
+    doc.track_selection_pointer(x, y, primary_held);
+    if primary_held
+        && let Some(host) = doc
+            .mousedown_node_id
+            .filter(|&host| doc.hover_node_id != Some(host))
+    {
+        let pos = doc.nodes[host].absolute_position(0.0, 0.0);
+        if let Some(sub_doc) = doc.nodes[host].subdoc_mut() {
+            let viewport_scroll = sub_doc.inner().viewport_scroll();
+            let mut sub_event = event.clone();
+            super::adjust_coords_for_subdocument(&mut sub_event.coords, pos, viewport_scroll);
+            sub_doc.handle_ui_event(UiEvent::PointerMove(sub_event));
+            changed |= doc.extend_selection_drag_to_pointer();
+        }
+    }
+
     // Check if we've moved enough to be considered a selection drag (2px threshold)
     if buttons != MouseEventButtons::None && doc.drag_mode == DragMode::None {
         let dx = x - doc.mousedown_position.x;
@@ -417,6 +438,7 @@ pub(crate) fn record_pointerdown(doc: &mut BaseDocument, x: f32, y: f32) {
     doc.last_mousedown_time = Some(Instant::now());
     doc.mousedown_position = taffy::Point { x, y };
     doc.drag_mode = DragMode::None;
+    doc.stop_selection_autoscroll();
     doc.scroll_animation = ScrollAnimationState::None;
 }
 
@@ -589,6 +611,8 @@ pub(crate) fn handle_pointerup(
     // Reset Document's drag state to DragMode::None, storing the state
     // locally for use within this function
     let drag_mode = doc.drag_mode.take();
+    doc.stop_selection_autoscroll();
+    doc.end_sub_document_drag();
 
     // Don't dispatch click if we were doing a text selection drag or panning
     // the document with a touch. Nor for a prevented touch or pen: that may be a

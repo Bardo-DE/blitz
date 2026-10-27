@@ -296,6 +296,16 @@ pub struct BaseDocument {
     /// in scroll offset terms. A document hosting this one takes it with
     /// [`take_unconsumed_wheel`](Self::take_unconsumed_wheel) to continue the scroll.
     pub(crate) unconsumed_wheel: crate::Point<f64>,
+    /// The pointer of a selection drag (primary button down), in this document's client
+    /// coordinates; see the `selection_autoscroll` module
+    pub(crate) selection_pointer: Option<(f32, f32)>,
+    /// The animation time of the last selection autoscroll tick
+    pub(crate) selection_autoscroll_time: Option<f64>,
+    /// Whether a selection drag is scrolling something (so we should re-render every frame)
+    pub(crate) selection_autoscrolling: bool,
+    /// Whether another document hosts this one (a sub-document), so it is that document which
+    /// drives a selection autoscroll through this one
+    pub(crate) hosted: bool,
 
     /// The commands AppKit made of the key being pressed (`insertNewline:` for Return), which
     /// reach the document before the key does. They are the key's default action, run once its
@@ -556,6 +566,10 @@ impl BaseDocument {
             held_key_commands: Vec::new(),
             pending_events: VecDeque::new(),
             wheel_gesture: WheelGesture::default(),
+            selection_pointer: None,
+            selection_autoscroll_time: None,
+            selection_autoscrolling: false,
+            hosted: false,
             text_selection: TextSelection::default(),
             scratch: DocumentScratch::default(),
         };
@@ -2288,6 +2302,7 @@ impl BaseDocument {
         self.has_canvas
             | self.has_active_animations
             | self.subdoc_is_animating
+            | self.selection_autoscrolling
             | custom_widget_is_animating
             | (self.scroll_animation != ScrollAnimationState::None)
             | self.scrollbars_animating()
