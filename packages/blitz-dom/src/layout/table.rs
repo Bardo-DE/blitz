@@ -287,6 +287,7 @@ pub(crate) fn build_table_context(
                 doc,
                 child_id,
                 wm,
+                false,
                 is_fixed,
                 border_collapse,
                 &mut row,
@@ -525,6 +526,7 @@ fn collect_table_cells(
     doc: &mut BaseDocument,
     node_id: NodeId,
     wm: WritingMode,
+    in_row: bool,
     is_fixed: bool,
     border_collapse: BorderCollapse,
     row: &mut u16,
@@ -561,7 +563,24 @@ fn collect_table_cells(
         return;
     }
 
-    match display.inside() {
+    // A child that is not table-internal (a `td` or a row's child set to `display: block`, say)
+    // is wrapped in an anonymous cell, and in an anonymous row too when it is not in a row
+    // (CSS 2.1 §17.2.1). Only a `table-caption` is set aside.
+    let inside = display.inside();
+    let anonymous = matches!(
+        inside,
+        DisplayInside::Flow
+            | DisplayInside::FlowRoot
+            | DisplayInside::Flex
+            | DisplayInside::Grid
+            | DisplayInside::GridLanes
+    );
+    if anonymous && display.outside() == DisplayOutside::TableCaption {
+        node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+        return;
+    }
+
+    match inside {
         DisplayInside::TableRowGroup
         | DisplayInside::TableHeaderGroup
         | DisplayInside::TableFooterGroup
@@ -575,6 +594,7 @@ fn collect_table_cells(
                     doc,
                     child_id,
                     wm,
+                    false,
                     is_fixed,
                     border_collapse,
                     row,
@@ -616,6 +636,7 @@ fn collect_table_cells(
                     doc,
                     child_id,
                     wm,
+                    true,
                     is_fixed,
                     border_collapse,
                     row,
@@ -630,17 +651,35 @@ fn collect_table_cells(
             }
             doc.nodes[node_id].children = children;
         }
-        DisplayInside::TableCell => {
+        DisplayInside::TableCell
+        | DisplayInside::Flow
+        | DisplayInside::FlowRoot
+        | DisplayInside::Flex
+        | DisplayInside::Grid
+        | DisplayInside::GridLanes => {
             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+            if anonymous && !in_row {
+                // Its own anonymous row, which the node stands for (its background is the
+                // row's, over the same box).
+                *row += 1;
+                cursor.start_row();
+                rows.push(TableRow {
+                    node_id,
+                    height: 0.0,
+                });
+            }
             let stylo_style = &node.primary_styles().unwrap();
+            // The spans are a cell's; an anonymous one has none.
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
                 .and_then(|val| val.parse().ok())
+                .filter(|_| !anonymous)
                 .unwrap_or(1);
             let rowspan: u16 = node
                 .attr(local_name!("rowspan"))
                 .and_then(|val| val.parse::<u16>().ok())
                 .map(|v| v.clamp(1, 65534))
+                .filter(|_| !anonymous)
                 .unwrap_or(1);
             let mut style = table_taffy_style(stylo_style, wm);
             let col = cursor.next_free();
@@ -777,18 +816,6 @@ fn collect_table_cells(
             });
 
             cursor.place(colspan, rowspan);
-        }
-        DisplayInside::Flow
-        | DisplayInside::FlowRoot
-        | DisplayInside::Flex
-        | DisplayInside::Grid
-        | DisplayInside::GridLanes => {
-            node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-            // Probably a table caption: ignore
-            // println!(
-            //     "Warning: ignoring non-table typed descendent of table ({:?})",
-            //     display.inside()
-            // );
         }
         DisplayInside::TableColumnGroup | DisplayInside::TableColumn | DisplayInside::Table => {
             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
