@@ -236,6 +236,7 @@ pub(crate) fn build_table_context(
                 &mut column_sizes,
                 &mut first_cell_border,
                 &mut percent_columns,
+                false,
             );
         }
     }
@@ -256,6 +257,22 @@ pub(crate) fn build_table_context(
     }
     let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
     column_sizes.resize(num_columns as usize, remaining_column);
+    if !is_fixed {
+        // In the automatic table layout a column's width is a floor its cells' min-content
+        // width can still exceed: a `width: 24px` header holding "Status" is as wide as the
+        // word, not cut to 24px with the word broken letter by letter (CSS 2.1 section 17.5.2.2).
+        for column in column_sizes.iter_mut() {
+            let max = column.max.into_raw();
+            if max.tag() == taffy::CompactLength::LENGTH_TAG
+                && column.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG
+            {
+                *column = style_helpers::minmax(
+                    taffy::MinTrackSizingFunction::min_content(),
+                    taffy::MaxTrackSizingFunction::length(max.value()),
+                );
+            }
+        }
+    }
     if is_fixed {
         // In the fixed table layout algorithm, percentage column widths resolve against
         // the table's content width minus the horizontal border-spacing between columns,
@@ -293,6 +310,7 @@ pub(crate) fn build_table_context(
         }
     }
 
+    if std::env::var_os("BLITZ_TABLE_DEBUG").is_some() { eprintln!("DEBUG table fixed={is_fixed} cols={column_sizes:?}"); }
     style.grid_template_columns = column_sizes.into_iter().map(|dim| dim.into()).collect();
     style.grid_template_rows = vec![style_helpers::auto(); row as usize];
 
@@ -440,6 +458,7 @@ fn collect_table_cells(
     columns: &mut Vec<TrackSizingFunction>,
     first_cell_border: &mut Option<ServoArc<Border>>,
     percent_columns: &mut Vec<(u16, f32, f32)>,
+    in_row: bool,
 ) {
     let node = &mut doc.nodes[node_id];
 
@@ -463,6 +482,9 @@ fn collect_table_cells(
         | DisplayInside::TableHeaderGroup
         | DisplayInside::TableFooterGroup
         | DisplayInside::Contents => {
+            // `display: contents` passes its children up to whatever holds it; a row group's
+            // children are in no row until one starts.
+            let in_row = in_row && display.inside() == DisplayInside::Contents;
             let children = std::mem::take(&mut doc.nodes[node_id].children);
             for child_id in children.iter().copied() {
                 doc.nodes[child_id]
@@ -479,6 +501,7 @@ fn collect_table_cells(
                     columns,
                     first_cell_border,
                     percent_columns,
+                    in_row,
                 );
             }
             doc.nodes[node_id].children = children;
@@ -507,11 +530,26 @@ fn collect_table_cells(
                     columns,
                     first_cell_border,
                     percent_columns,
+                    true,
                 );
             }
             doc.nodes[node_id].children = children;
         }
-        DisplayInside::TableCell => {
+        // A box in a row that is not a table part (a cell given `display: block`, say, as mail
+        // templates do for narrow screens) is wrapped in an anonymous cell (CSS 2.1 section
+        // 17.2.1): it is laid out as that cell, not dropped. One directly in a table or row
+        // group would need an anonymous row as well, which is not built yet: it is skipped, as
+        // is a caption, which is placed outside the grid.
+        DisplayInside::TableCell
+        | DisplayInside::Flow
+        | DisplayInside::FlowRoot
+        | DisplayInside::Flex
+        | DisplayInside::Grid => {
+            let anonymous = display.inside() != DisplayInside::TableCell;
+            if anonymous && (!in_row || display.outside() == DisplayOutside::TableCaption) {
+                node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                return;
+            }
             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
             let stylo_style = &node.primary_styles().unwrap();
             let colspan: u16 = node
@@ -614,17 +652,6 @@ fn collect_table_cells(
             cells.push(TableCell { node_id, style });
 
             cursor.place(colspan, rowspan);
-        }
-        DisplayInside::Flow
-        | DisplayInside::FlowRoot
-        | DisplayInside::Flex
-        | DisplayInside::Grid => {
-            node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-            // Probably a table caption: ignore
-            // println!(
-            //     "Warning: ignoring non-table typed descendent of table ({:?})",
-            //     display.inside()
-            // );
         }
         DisplayInside::TableColumnGroup | DisplayInside::TableColumn | DisplayInside::Table => {
             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
