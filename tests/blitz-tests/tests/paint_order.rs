@@ -141,3 +141,26 @@ fn later_fixed_box_over_rows(context: &str) {
         "{context}: the card takes the hit"
     );
 }
+
+/// A fixed box before positioned rows in a stacking context stays under them: positioned boxes
+/// paint in tree order there whatever their containing block.
+#[test]
+fn earlier_fixed_box_stays_under_later_relative_rows_in_a_stacking_context() {
+    let html = r#"<html><body style="margin:0">
+        <div style="position:relative; z-index:1; height:100px;">
+            <div style="position:relative; height:100px;">
+                <div style="position:fixed; left:25px; top:25px">
+                    <div style="width:50px; height:50px; background:#ff0000;"></div>
+                </div>
+                <div style="position:relative">
+                    <div id="row" style="position:relative; height:100px; background:#0000ff;"></div>
+                </div>
+            </div>
+        </div>
+    </body></html>"#;
+    assert_eq!(
+        center_pixel(html),
+        [0, 0, 255],
+        "the later row paints over the fixed card"
+    );
+}

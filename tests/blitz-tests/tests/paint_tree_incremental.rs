@@ -486,9 +486,11 @@ const OOF_OWNERSHIP: &str = r#"<html><head><style>
     <div id="cb"><div id="anc"><div id="spacer"></div><div id="abs"></div><div id="fixed"></div></div><div id="sib"></div></div>
 </body></html>"#;
 
-/// An out-of-flow box is painted (and hit-tested) by its containing block,
-/// not its DOM parent; when a hover makes the parent the containing block the
-/// box moves between the two paint lists in the same frame.
+/// An out-of-flow box is painted (and hit-tested) by its containing block, not
+/// its DOM parent, unless a positioned box lies between the two: the fixed box
+/// contained by the root paints in `#cb`, in tree order among the positioned
+/// boxes there (CSS 2.1 Appendix E). When a hover makes the parent the
+/// containing block the box moves between the two paint lists in the same frame.
 #[test]
 fn oof_box_is_owned_by_containing_block() {
     for incremental in [true, false] {
@@ -511,8 +513,13 @@ fn oof_box_is_owned_by_containing_block() {
             "{msg}: tree order among positioned boxes: {cb_paint:?}"
         );
         assert!(
-            paint_children(&doc, root).contains(&fixed),
-            "{msg}: fixed owned by root"
+            !paint_children(&doc, root).contains(&fixed),
+            "{msg}: fixed not painted by root"
+        );
+        let order = |n| cb_paint.iter().position(|&m| m == n);
+        assert!(
+            order(abs) < order(fixed) && order(fixed) < order(sib),
+            "{msg}: fixed painted by #cb in tree order: {cb_paint:?}"
         );
         assert_eq!(abs_pos(&doc, fixed), (10.0, 10.0), "{msg}");
         assert_eq!(hit(&doc, 20.0, 20.0), fixed, "{msg}");
@@ -546,7 +553,7 @@ fn oof_box_is_owned_by_containing_block() {
 
         unhover(&mut doc);
         assert!(!paint_children(&doc, anc).contains(&fixed), "{msg}");
-        assert!(paint_children(&doc, root).contains(&fixed), "{msg}");
+        assert!(paint_children(&doc, cb).contains(&fixed), "{msg}");
         assert!(paint_children(&doc, cb).contains(&abs), "{msg}");
         assert_eq!(hit(&doc, 20.0, 20.0), fixed, "{msg}");
     }

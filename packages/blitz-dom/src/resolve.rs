@@ -238,10 +238,25 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
+            // A box painted by a stacking context or positioned box below this one counts in
+            // that painter's overflow (the hit test prunes by it), not here.
+            if self
+                .oof_painter(child_id)
+                .is_some_and(|painter| painter != node_id)
+            {
+                continue;
+            }
             let child_rect_in_self = self.resolve_transforms(child_id, resolve_all);
             overflow = overflow.union(child_rect_in_self);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
+        for child_id in self.painted_from_above(node_id) {
+            let child_rect_in_cb = self.resolve_transforms(child_id, resolve_all);
+            let offset =
+                crate::layout::paint_tree::hoisted_child_position(&self.nodes, node_id, child_id);
+            let offset = kurbo::Vec2::new(offset.x as f64 * scale, offset.y as f64 * scale);
+            overflow = overflow.union(child_rect_in_cb + offset);
+        }
         for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
             let Some(pseudo) = pseudo else { continue };
             if self.nodes[pseudo].is_out_of_flow() {

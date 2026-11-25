@@ -314,7 +314,7 @@ impl BaseDocument {
             // Appendix E). Boxes whose layout-parent chain does not lead through
             // a layout child of this node come after all of them.
             let mut hoisted_past_parent: Vec<(usize, NodeId)> = self
-                .painted_past_parent(node_id, stacking_context.is_none())
+                .painted_past_parent(node_id)
                 .into_iter()
                 .map(|id| {
                     let anchor = self
@@ -420,11 +420,12 @@ impl BaseDocument {
     }
 
     /// The node that paints the out-of-flow box `child_id`: its containing block, unless a
-    /// stacking-context root lies between the two on the box's layout-parent chain, which then
-    /// paints it. Stacking contexts follow the tree, not the containing block (CSS 2.1 Appendix
-    /// E): a fixed box inside a `z-index` context paints, and is hit, inside that context. `None`
-    /// for an in-flow box.
-    fn oof_painter(&self, child_id: NodeId) -> Option<NodeId> {
+    /// stacking-context root or a positioned box that does not clip lies between the two on the
+    /// box's layout-parent chain; the nearest such box then paints it. Stacking contexts and the
+    /// tree order of positioned boxes follow the tree, not the containing block (CSS 2.1 Appendix
+    /// E): a fixed box inside a `z-index` context paints, and is hit, inside that context, in
+    /// tree order among the positioned boxes there. `None` for an in-flow box.
+    pub(crate) fn oof_painter(&self, child_id: NodeId) -> Option<NodeId> {
         let child = self.nodes.get(child_id)?;
         let cb = child.oof_containing_block.get()?;
         let mut current = child.layout_parent.get();
@@ -432,52 +433,69 @@ impl BaseDocument {
             if id == cb {
                 break;
             }
-            let node = &self.nodes[id];
-            let parent_is_flex_or_grid = node
-                .layout_parent
-                .get()
-                .and_then(|parent| self.nodes[parent].display_style())
-                .is_some_and(|display| {
-                    matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid)
-                });
-            if node.is_stacking_context_root(parent_is_flex_or_grid) {
+            if self.paints_from_above(id) {
                 return Some(id);
             }
-            current = node.layout_parent.get();
+            current = self.nodes[id].layout_parent.get();
         }
         Some(cb)
     }
 
+    /// Whether `node_id` can paint out-of-flow boxes whose containing block lies above it: a
+    /// stacking-context root or a positioned box that does not clip.
+    pub(crate) fn paints_from_above(&self, node_id: NodeId) -> bool {
+        let node = &self.nodes[node_id];
+        let parent_is_flex_or_grid = node
+            .layout_parent
+            .get()
+            .and_then(|parent| self.nodes[parent].display_style())
+            .is_some_and(|display| {
+                matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid)
+            });
+        node.is_stacking_context_root(parent_is_flex_or_grid) || node.paints_positioned_unclipped()
+    }
+
+    /// Whether `node_id` paints the out-of-flow box `id` without being its layout parent.
+    fn paints_past_parent(&self, node_id: NodeId, id: NodeId) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|n| n.layout_parent.get() != Some(node_id))
+            && self.oof_painter(id) == Some(node_id)
+    }
+
     /// The out-of-flow boxes `node_id` paints although it is not their layout parent: those
-    /// hoisted to it as their containing block, and, for a stacking-context root, those whose
-    /// containing block lies above it (see [`Self::oof_painter`]).
-    fn painted_past_parent(&self, node_id: NodeId, is_sc_root: bool) -> Vec<NodeId> {
-        let ours = |id: NodeId| {
-            self.nodes
-                .get(id)
-                .is_some_and(|n| n.layout_parent.get() != Some(node_id))
-                && self.oof_painter(id) == Some(node_id)
-        };
+    /// hoisted to it as their containing block, and those whose containing block lies above it
+    /// (see [`Self::oof_painter`]).
+    fn painted_past_parent(&self, node_id: NodeId) -> Vec<NodeId> {
         let mut boxes: Vec<NodeId> = self.nodes[node_id]
             .hoisted_children
             .borrow()
             .iter()
             .copied()
-            .filter(|&id| ours(id))
+            .filter(|&id| self.paints_past_parent(node_id, id))
             .collect();
-        if is_sc_root {
-            let mut ancestor = self.nodes[node_id].layout_parent.get();
-            while let Some(id) = ancestor {
-                let node = &self.nodes[id];
-                boxes.extend(
-                    node.hoisted_children
-                        .borrow()
-                        .iter()
-                        .copied()
-                        .filter(|&id| ours(id)),
-                );
-                ancestor = node.layout_parent.get();
-            }
+        boxes.extend(self.painted_from_above(node_id));
+        boxes
+    }
+
+    /// The out-of-flow boxes `node_id` paints whose containing block is one of its ancestors
+    /// (see [`Self::oof_painter`]); none unless it [paints from above](Self::paints_from_above).
+    pub(crate) fn painted_from_above(&self, node_id: NodeId) -> Vec<NodeId> {
+        let mut boxes = Vec::new();
+        if !self.paints_from_above(node_id) {
+            return boxes;
+        }
+        let mut ancestor = self.nodes[node_id].layout_parent.get();
+        while let Some(id) = ancestor {
+            let node = &self.nodes[id];
+            boxes.extend(
+                node.hoisted_children
+                    .borrow()
+                    .iter()
+                    .copied()
+                    .filter(|&id| self.paints_past_parent(node_id, id)),
+            );
+            ancestor = node.layout_parent.get();
         }
         boxes
     }
@@ -545,6 +563,21 @@ impl Node {
                     || e.sub_doc_data().is_some()
                     || e.text_input_data().is_some()
             })
+    }
+
+    /// Whether this is a positioned box that paints its positioned descendants without clipping
+    /// them: an out-of-flow box it does not contain escapes any clip, so only such a box may
+    /// paint one in tree order.
+    fn paints_positioned_unclipped(&self) -> bool {
+        use style::values::computed::{Contain, Overflow};
+
+        self.primary_styles().is_some_and(|style| {
+            let box_style = style.get_box();
+            style.clone_position() != Position::Static
+                && matches!(box_style.overflow_x, Overflow::Visible)
+                && matches!(box_style.overflow_y, Overflow::Visible)
+                && !box_style.slow_clone_contain().contains(Contain::PAINT)
+        })
     }
 
     /// Whether this is a `position: relative` or `sticky` box.
