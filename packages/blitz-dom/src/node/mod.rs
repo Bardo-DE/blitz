@@ -32,6 +32,6 @@ pub use surrounding_text::{SURROUNDING_TEXT_MAX_BYTES, SurroundingText};
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 pub use text::{
-    GeneratedTextInputEvent, INLINE_BOX_CHAR, TextBrush, TextInputData, TextLayout, TextOverflowCut,
-    TextOverflowMarker,
+    GeneratedTextInputEvent, INLINE_BOX_CHAR, TextBrush, TextInputData, TextLayout,
+    TextOverflowCut, TextOverflowMarker,
 };
