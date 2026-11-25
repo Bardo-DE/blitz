@@ -665,7 +665,9 @@ fn collect_table_cells(
                 cursor.start_row();
                 rows.push(TableRow {
                     node_id,
-                    height: 0.0,
+                    group: None,
+                    height: None,
+                    is_constrained: false,
                 });
             }
             let stylo_style = &node.primary_styles().unwrap();

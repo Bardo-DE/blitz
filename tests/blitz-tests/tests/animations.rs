@@ -41,7 +41,8 @@ fn opacity_of(doc: &HtmlDocument) -> f32 {
         .unwrap()
         .primary_styles()
         .unwrap()
-        .clone_opacity()
+        .get_effects()
+        .opacity
 }
 
 fn set_class(doc: &mut HtmlDocument, value: &str) {

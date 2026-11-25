@@ -92,6 +92,7 @@ impl Default for DocumentConfig {
             incremental: None,
             abort_signal: None,
             subdocument_depth: 0,
+            text_action_resolver: None,
             #[cfg(feature = "devtools")]
             devtools_provider: None,
         }

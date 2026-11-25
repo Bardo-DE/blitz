@@ -17,6 +17,7 @@ use style::properties::ComputedValues;
 use style::values::computed::Overflow;
 use style::values::specified::box_::DisplayInside;
 use style::values::specified::text::TextOverflowSide;
+use stylo_taffy::CopyStyleGetters;
 
 use crate::node::{TextBrush, TextOverflowCut, TextOverflowMarker};
 use crate::{BaseDocument, stylo_to_parley};
