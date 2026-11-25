@@ -23,6 +23,7 @@ use crate::{
     TextActionResolver, TextNodeData,
 };
 use bitflags::bitflags;
+use blitz_traits::SmolStr;
 use blitz_traits::devtools::DevtoolSettings;
 use blitz_traits::events::EventDispatchSource;
 use blitz_traits::events::{BlitzFocusEvent, DomEvent, DomEventData, HitResult, UiEvent};
@@ -295,6 +296,11 @@ pub struct BaseDocument {
     /// in scroll offset terms. A document hosting this one takes it with
     /// [`take_unconsumed_wheel`](Self::take_unconsumed_wheel) to continue the scroll.
     pub(crate) unconsumed_wheel: crate::Point<f64>,
+
+    /// The commands AppKit made of the key being pressed (`insertNewline:` for Return), which
+    /// reach the document before the key does. They are the key's default action, run once its
+    /// `keydown` is not cancelled.
+    pub(crate) held_key_commands: Vec<SmolStr>,
     /// Events which have been generated but not yet dispatched. Drained by the
     /// [`EventDriver`](crate::EventDriver).
     pub(crate) pending_events: VecDeque<DomEvent>,
@@ -547,6 +553,7 @@ impl BaseDocument {
             scrollbar_activity: HashMap::new(),
             scroll_animation: ScrollAnimationState::None,
             unconsumed_wheel: crate::Point::ZERO,
+            held_key_commands: Vec::new(),
             pending_events: VecDeque::new(),
             wheel_gesture: WheelGesture::default(),
             text_selection: TextSelection::default(),

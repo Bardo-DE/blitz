@@ -359,16 +359,23 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 DomEventData::Wheel(data),
                 EventDispatchSource::Input,
             )),
-            UiEvent::KeyUp(data) => self.handle_dom_event(DomEvent::new(
-                target,
-                DomEventData::KeyUp(data),
-                EventDispatchSource::Input,
-            )),
-            UiEvent::KeyDown(data) => self.handle_dom_event(DomEvent::new(
-                target,
-                DomEventData::KeyDown(data),
-                EventDispatchSource::Input,
-            )),
+            UiEvent::KeyUp(data) => {
+                self.doc.inner_mut().held_key_commands.clear();
+                self.handle_dom_event(DomEvent::new(
+                    target,
+                    DomEventData::KeyUp(data),
+                    EventDispatchSource::Input,
+                ))
+            }
+            UiEvent::KeyDown(data) => {
+                self.handle_dom_event(DomEvent::new(
+                    target,
+                    DomEventData::KeyDown(data),
+                    EventDispatchSource::Input,
+                ));
+                // A cancelled keydown runs no default action: its commands go with it.
+                self.doc.inner_mut().held_key_commands.clear();
+            }
             UiEvent::Ime(data) => self.handle_dom_event(DomEvent::new(
                 target,
                 DomEventData::Ime(data),
@@ -381,14 +388,11 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 );
                 self.flush_pending_events();
             }
+            // AppKit sends the command it made of a key before the key itself: it waits for the
+            // key's keydown, whose default action it is, so a handler that cancels the keydown
+            // (Enter in a field that submits) cancels it too.
             UiEvent::AppleStandardKeybinding(data) => {
-                let mut dom_event = DomEvent::new(
-                    target,
-                    DomEventData::AppleStandardKeybinding(data),
-                    EventDispatchSource::Input,
-                );
-                self.run_default_action(&mut dom_event, false);
-                self.flush_pending_events();
+                self.doc.inner_mut().held_key_commands.push(data);
             }
             UiEvent::DragOver(data) => self.handle_dom_event(DomEvent::new(
                 target,
