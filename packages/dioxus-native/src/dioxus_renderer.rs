@@ -36,14 +36,14 @@ cfg_if::cfg_if! {
 // The wgpu types are exported whenever a wgpu renderer feature is enabled, even if
 // a higher-precedence renderer is the active one.
 #[cfg(feature = "vello")]
-pub use anyrender_vello::wgpu::{Features, Limits};
+pub use anyrender_vello::wgpu::{Backends, Features, Limits};
 #[cfg(all(feature = "vello-gpu", not(feature = "vello")))]
-pub use anyrender_vello_gpu::wgpu::{Features, Limits};
+pub use anyrender_vello_gpu::wgpu::{Backends, Features, Limits};
 
 /// Renderer configuration for [`DioxusNativeWindowRenderer`].
 ///
 /// Fields that only apply to the GPU-backed `vello`/`vello-gpu` renderers
-/// (`features`/`limits`) are only present when one of those features is enabled.
+/// (`features`/`limits`/`backends`) are only present when one of those features is enabled.
 #[derive(Default)]
 pub struct RendererOptions {
     /// Base (background) color used to clear each frame.
@@ -56,6 +56,11 @@ pub struct RendererOptions {
     /// wgpu limits to request from the GPU adapter.
     #[cfg(any(feature = "vello", feature = "vello-gpu"))]
     pub limits: Option<Limits>,
+    /// wgpu backends to probe for an adapter; `None` leaves wgpu's default (every backend the
+    /// build supports). `WGPU_BACKEND` wins when set, and when the named backends find no
+    /// adapter the renderer falls back once to the default set.
+    #[cfg(any(feature = "vello", feature = "vello-gpu"))]
+    pub backends: Option<Backends>,
 }
 
 #[derive(Clone)]
@@ -87,7 +92,7 @@ impl DioxusNativeWindowRenderer {
     ///
     /// `base_color` and `alpha_mode` are forwarded to the active renderer via
     /// [`anyrender::RendererConfig`]; renderers that don't support a particular
-    /// option simply ignore it. `features`/`limits` are only applied by the
+    /// option simply ignore it. `features`/`limits`/`backends` are only applied by the
     /// GPU-backed `vello`/`vello-gpu` renderers.
     pub fn with_options(options: RendererOptions) -> Self {
         let mut config = RendererConfig::default();
@@ -108,6 +113,9 @@ impl DioxusNativeWindowRenderer {
                 }
                 if let Some(limits) = options.limits {
                     inner_options = inner_options.limits(limits);
+                }
+                if let Some(backends) = options.backends {
+                    inner_options = inner_options.backends(backends);
                 }
                 let inner_renderer = InnerRenderer::with_options(inner_options);
             } else {
