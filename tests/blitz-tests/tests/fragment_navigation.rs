@@ -319,6 +319,26 @@ fn percentage_height_scroller_clamps_after_viewport_resize() {
 }
 
 #[test]
+fn an_out_of_range_offset_survives_resolve_until_the_scroll_range_changes() {
+    let mut doc = layout_doc(
+        r#"<!DOCTYPE html><style>html,body{height:100%;margin:0}</style>
+        <div id="scroller" style="overflow:auto;height:50%">
+            <div style="height:1000px"></div>
+        </div>"#,
+    );
+    let scroller = doc.query_selector("#scroller").unwrap().unwrap();
+    // An embedder's elastic overscroll writes past the top edge.
+    doc.get_node_mut(scroller).unwrap().scroll_offset_mut().y = -40.0;
+    doc.resolve(0.0);
+    doc.resolve(0.0);
+    assert_eq!(doc.get_node(scroller).unwrap().scroll_offset().y, -40.0);
+
+    doc.set_viewport(Viewport::new(800, 400, 1.0, ColorScheme::Light));
+    doc.resolve(0.0);
+    assert_eq!(doc.get_node(scroller).unwrap().scroll_offset().y, 0.0);
+}
+
+#[test]
 fn smooth_scroll_does_not_reverse_after_viewport_resize() {
     for (viewport_height, expected_max) in [(1900, 50.0), (400, 800.0)] {
         let mut doc = layout_doc(

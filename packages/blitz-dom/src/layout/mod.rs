@@ -858,8 +858,15 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
-        self.clamp_node_scroll_offset(dom_node_id(node_id));
+        let node = self.node_from_id_mut(node_id);
+        let range = node.scroll_range();
+        *node.final_layout_mut() = *layout;
+        // Clamp only when this layout moved the scroll range. Rounding runs on every resolve, and
+        // an embedder may hold an offset outside the range on purpose (an elastic overscroll); it
+        // stays until the box's size or content changes.
+        if node.scroll_range() != range {
+            self.clamp_node_scroll_offset(dom_node_id(node_id));
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
