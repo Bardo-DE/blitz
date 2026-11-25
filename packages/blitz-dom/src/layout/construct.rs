@@ -922,7 +922,8 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
     };
     let is_focussed = node.is_focussed();
     let element = &mut node.data.downcast_element_mut().unwrap();
-    if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
+    let created = !matches!(element.special_data, SpecialElementData::TextInput(_));
+    if created {
         let mut text_input_data = TextInputData::new(is_multiline);
         let editor = &mut text_input_data.editor;
         editor.set_text(&initial_text);
@@ -965,9 +966,16 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
     editor.set_alignment(alignment);
     editor.set_base_direction(base_direction);
 
-    // A single-line input never wraps, so its text is laid out now. A textarea's is laid out once
-    // layout knows its width.
-    if !is_multiline {
+    if created {
+        // An editor built with its value starts with the caret at the end of it, as a browser's
+        // input does; parley's would sit at the start.
+        let font_ctx = &mut doc.font_ctx.lock().unwrap();
+        editor
+            .driver(font_ctx, &mut doc.layout_ctx)
+            .move_to_text_end();
+    } else if !is_multiline {
+        // A single-line input never wraps, so its text is laid out now. A textarea's is laid out
+        // once layout knows its width.
         editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
     }
 }
