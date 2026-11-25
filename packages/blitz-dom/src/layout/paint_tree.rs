@@ -50,8 +50,10 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         position.y += scroll_offset.y as f32 + viewport_scroll.y as f32;
     }
 
+    let mut reached = false;
     while let Some(id) = current {
         if id == sc_root_id {
+            reached = true;
             break;
         }
         let Some(node) = tree.get(id) else {
@@ -62,6 +64,24 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         position.x += location.x - scroll_offset.x as f32;
         position.y += location.y - scroll_offset.y as f32;
         current = node.containing_block();
+    }
+
+    // The painter is not on the child's chain: a box painted by the stacking context it belongs
+    // to while its containing block lies above that context. Measure the painter from the top of
+    // its own chain and take the difference; the painter's own scroll does not move the box.
+    if !reached && let Some(painter) = tree.get(sc_root_id) {
+        let mut origin = painter.final_layout().location;
+        let mut up = painter.containing_block();
+        while let Some(node) = up.and_then(|id| tree.get(id)) {
+            let location = node.final_layout().location;
+            let scroll_offset = *node.scroll_offset();
+            origin.x += location.x - scroll_offset.x as f32;
+            origin.y += location.y - scroll_offset.y as f32;
+            up = node.containing_block();
+        }
+        let scroll_offset = *painter.scroll_offset();
+        position.x -= origin.x - scroll_offset.x as f32;
+        position.y -= origin.y - scroll_offset.y as f32;
     }
     position
 }
@@ -285,26 +305,17 @@ impl BaseDocument {
             // block is not its layout parent is owned by the containing block;
             // its layout parent neither visits nor lists it.
             let owned_here = |doc: &Self, child_id: NodeId| -> bool {
-                doc.nodes[child_id]
-                    .oof_containing_block
-                    .get()
-                    .is_none_or(|cb| cb == node_id)
+                doc.oof_painter(child_id)
+                    .is_none_or(|painter| painter == node_id)
             };
             // Boxes hoisted to this node from further down the tree, keyed by
             // the index of the layout child they descend from: they are visited
             // and listed in tree order, directly after that child (CSS 2.1
             // Appendix E). Boxes whose layout-parent chain does not lead through
             // a layout child of this node come after all of them.
-            let mut hoisted_past_parent: Vec<(usize, NodeId)> = self.nodes[node_id]
-                .hoisted_children
-                .borrow()
-                .iter()
-                .copied()
-                .filter(|&id| {
-                    self.nodes
-                        .get(id)
-                        .is_some_and(|n| n.layout_parent.get() != Some(node_id))
-                })
+            let mut hoisted_past_parent: Vec<(usize, NodeId)> = self
+                .painted_past_parent(node_id, stacking_context.is_none())
+                .into_iter()
                 .map(|id| {
                     let anchor = self
                         .layout_child_containing(node_id, id)
@@ -406,6 +417,69 @@ impl BaseDocument {
             node.sc_contribution_cache.borrow_mut().clear();
             node.stacking_context = Some(Box::new(StackingContext::from_children(entries)));
         }
+    }
+
+    /// The node that paints the out-of-flow box `child_id`: its containing block, unless a
+    /// stacking-context root lies between the two on the box's layout-parent chain, which then
+    /// paints it. Stacking contexts follow the tree, not the containing block (CSS 2.1 Appendix
+    /// E): a fixed box inside a `z-index` context paints, and is hit, inside that context. `None`
+    /// for an in-flow box.
+    fn oof_painter(&self, child_id: NodeId) -> Option<NodeId> {
+        let child = self.nodes.get(child_id)?;
+        let cb = child.oof_containing_block.get()?;
+        let mut current = child.layout_parent.get();
+        while let Some(id) = current {
+            if id == cb {
+                break;
+            }
+            let node = &self.nodes[id];
+            let parent_is_flex_or_grid = node
+                .layout_parent
+                .get()
+                .and_then(|parent| self.nodes[parent].display_style())
+                .is_some_and(|display| {
+                    matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid)
+                });
+            if node.is_stacking_context_root(parent_is_flex_or_grid) {
+                return Some(id);
+            }
+            current = node.layout_parent.get();
+        }
+        Some(cb)
+    }
+
+    /// The out-of-flow boxes `node_id` paints although it is not their layout parent: those
+    /// hoisted to it as their containing block, and, for a stacking-context root, those whose
+    /// containing block lies above it (see [`Self::oof_painter`]).
+    fn painted_past_parent(&self, node_id: NodeId, is_sc_root: bool) -> Vec<NodeId> {
+        let ours = |id: NodeId| {
+            self.nodes
+                .get(id)
+                .is_some_and(|n| n.layout_parent.get() != Some(node_id))
+                && self.oof_painter(id) == Some(node_id)
+        };
+        let mut boxes: Vec<NodeId> = self.nodes[node_id]
+            .hoisted_children
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|&id| ours(id))
+            .collect();
+        if is_sc_root {
+            let mut ancestor = self.nodes[node_id].layout_parent.get();
+            while let Some(id) = ancestor {
+                let node = &self.nodes[id];
+                boxes.extend(
+                    node.hoisted_children
+                        .borrow()
+                        .iter()
+                        .copied()
+                        .filter(|&id| ours(id)),
+                );
+                ancestor = node.layout_parent.get();
+            }
+        }
+        boxes
     }
 
     /// The layout child of `node_id` whose subtree contains `id`, following

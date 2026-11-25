@@ -1630,6 +1630,10 @@ impl Node {
                     let viewport_scroll = self.tree().viewport_scroll();
                     child_x -= viewport_scroll.x as f32;
                     child_y -= viewport_scroll.y as f32;
+                } else if let Some(offset) = child.lifted_paint_offset(self.id) {
+                    // Painted by the stacking context it belongs to, not its containing block.
+                    child_x -= offset.x;
+                    child_y -= offset.y;
                 }
             } else if let Some(offset) = child.lifted_paint_offset(self.id) {
                 child_x -= offset.x;

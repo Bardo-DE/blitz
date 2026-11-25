@@ -93,3 +93,51 @@ fn abspos_hoisted_from_inline_block_in_span_paints_in_tree_order() {
         "later positioned inline-block must paint above the earlier hoisted abspos"
     );
 }
+
+/// A `position: fixed` box after positioned rows in tree order paints over them and takes the hit,
+/// also inside a stacking context (`z-index: 1`): the fixed box stays in that context.
+#[test]
+fn later_fixed_box_paints_and_hits_above_earlier_relative_rows() {
+    for context in [
+        "",
+        "z-index:1",
+        "z-index:1; margin-left:30px; margin-top:20px",
+    ] {
+        later_fixed_box_over_rows(context);
+    }
+}
+
+fn later_fixed_box_over_rows(context: &str) {
+    let html = format!(
+        r#"<html><body style="margin:0">
+        <div style="position:relative; height:100px; {context}">
+            <div style="position:relative">
+                <div id="row" style="position:relative; height:100px; background:#0000ff;"></div>
+            </div>
+            <div style="position:fixed; left:25px; top:25px">
+                <div id="card" style="width:50px; height:50px; background:#ff0000;"></div>
+            </div>
+        </div>
+    </body></html>"#
+    );
+    assert_eq!(
+        center_pixel(&html),
+        [255, 0, 0],
+        "{context}: the fixed card paints over the row"
+    );
+    let mut doc = HtmlDocument::from_html(
+        &html,
+        DocumentConfig {
+            viewport: Some(Viewport::new(100, 100, 1.0, ColorScheme::Light)),
+            html_parser_provider: Some(Arc::new(HtmlProvider) as _),
+            ..Default::default()
+        },
+    );
+    doc.resolve(0.0);
+    let card = doc.query_selector("#card").unwrap().unwrap();
+    assert_eq!(
+        doc.hit(50.0, 50.0).map(|hit| hit.node_id),
+        Some(card),
+        "{context}: the card takes the hit"
+    );
+}
