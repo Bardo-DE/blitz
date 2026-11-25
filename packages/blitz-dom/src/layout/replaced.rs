@@ -251,9 +251,14 @@ pub fn compute_replaced_layout(
 
     // Resolve sizes
     let size_style = style.size();
-    let style_size = size_style
-        .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
-        .maybe_sub(box_sizing_adjustment);
+    // A content box is never smaller than zero: a border-box size smaller than its padding and
+    // border (a percentage resolved against a min-content zero, say) leaves a zero content box.
+    let content_box = |size: Size<Option<f32>>| size.map(|axis| axis.map(|length| length.max(0.0)));
+    let style_size = content_box(
+        size_style
+            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
+            .maybe_sub(box_sizing_adjustment),
+    );
     let style_size = Size {
         width: if size_style.width.is_stretch() {
             stretch_size.width
@@ -266,15 +271,19 @@ pub fn compute_replaced_layout(
             style_size.height
         },
     };
-    let mut min_size = style
-        .min_size()
-        .maybe_resolve(parent_size, &resolve_calc_value)
-        .maybe_sub(box_sizing_adjustment);
-    let max_size = style
-        .max_size()
-        .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
-        .maybe_max(min_size)
-        .maybe_sub(box_sizing_adjustment);
+    let mut min_size = content_box(
+        style
+            .min_size()
+            .maybe_resolve(parent_size, &resolve_calc_value)
+            .maybe_sub(box_sizing_adjustment),
+    );
+    let max_size = content_box(
+        style
+            .max_size()
+            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
+            .maybe_max(min_size)
+            .maybe_sub(box_sizing_adjustment),
+    );
 
     // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
     // parent layout algorithm applies them itself, and content-based measurement should return
@@ -300,11 +309,13 @@ pub fn compute_replaced_layout(
     if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
         // Style max sizes without the available-space fallback: available space must not
         // constrain the aspect-ratio transfer of parent-resolved dimensions.
-        let style_max_size = style
-            .max_size()
-            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
-            .maybe_sub(box_sizing_adjustment)
-            .maybe_max(min_size);
+        let style_max_size = content_box(
+            style
+                .max_size()
+                .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
+                .maybe_sub(box_sizing_adjustment),
+        )
+        .maybe_max(min_size);
 
         let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
         let transferred = content_box_known_dimensions

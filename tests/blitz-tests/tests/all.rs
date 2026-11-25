@@ -75,6 +75,7 @@ mod pseudo_element_flow_classification;
 mod pseudo_element_update;
 mod rem_after_viewport_change;
 mod render_blocking_stylesheet;
+mod replaced_border_box_min_content;
 mod resize_restyle;
 mod rotate_z_axis;
 mod scale_change_overflow;
