@@ -27,8 +27,6 @@ pub(crate) fn handle_key_or_input_event(
             } else {
                 doc.focus_next_node();
             }
-            // The focus may also have moved on inside a sub-document, leaving the host's as it was
-            doc.shell_provider.request_redraw();
             return false;
         }
 

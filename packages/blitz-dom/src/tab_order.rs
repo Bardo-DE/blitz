@@ -106,6 +106,8 @@ impl BaseDocument {
     /// moved on inside its sub-document).
     pub(crate) fn focus_by_tab(&mut self, direction: FocusDirection) -> Option<NodeId> {
         if self.focus_step_inside(direction) {
+            // The focus moved on inside the sub-document; the host's stays as it was
+            self.shell_provider.request_redraw();
             return self.focus_node_id;
         }
         let id = self.tab_stop_from(self.get_focussed_node_id()?, direction)?;
