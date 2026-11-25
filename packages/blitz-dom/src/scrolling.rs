@@ -107,6 +107,39 @@ pub(crate) struct ScrollRequest {
     pub(crate) interrupt_animation: bool,
 }
 
+/// What a scroll did: whether anything moved, and the part of the delta which no scroller in
+/// the chain could consume (in the same direction as a scroll offset, so it can be passed
+/// on to another scroller as a [`ScrollAmount::By`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScrollOutcome {
+    pub(crate) changed: bool,
+    pub(crate) unconsumed: Point<f64>,
+}
+
+impl ScrollOutcome {
+    /// The outcome of this scroll followed by `next`, which was given what this left over.
+    fn then(self, next: ScrollOutcome) -> ScrollOutcome {
+        ScrollOutcome {
+            changed: self.changed | next.changed,
+            unconsumed: next.unconsumed,
+        }
+    }
+}
+
+/// A user-initiated, instant scroll which chains its leftover on to the next scroller.
+fn user_chain_request(target: ScrollTarget, by: Point<f64>) -> ScrollRequest {
+    ScrollRequest {
+        target,
+        amount: ScrollAmount::By(by),
+        overflow: ScrollOverflow::Chain,
+        source: ScrollSource::User,
+        behavior: ScrollBehavior::Instant,
+        // A user-initiated scroll aborts any smooth scroll in progress, so that the
+        // two do not fight over the scroll offset for the rest of the animation.
+        interrupt_animation: true,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FlingState {
     pub(crate) target: NodeId,
@@ -244,6 +277,12 @@ impl BaseDocument {
     /// ([`BaseDocument::scroll_chain_by`]) and programmatic scrolls
     /// ([`BaseDocument::scroll_to`]) differ only in the [`ScrollRequest`] they build.
     pub(crate) fn scroll(&mut self, request: ScrollRequest) -> bool {
+        self.scroll_outcome(request).changed
+    }
+
+    /// Like [`BaseDocument::scroll`], also reporting the delta which nothing in the chain
+    /// consumed (always zero for a request which does not chain).
+    pub(crate) fn scroll_outcome(&mut self, request: ScrollRequest) -> ScrollOutcome {
         if request.interrupt_animation
             && matches!(self.scroll_animation, ScrollAnimationState::ScrollTo(_))
         {
@@ -257,8 +296,8 @@ impl BaseDocument {
         if let (ScrollTarget::Node(node_id), ScrollAmount::By(delta), ScrollOverflow::Chain) =
             (target, request.amount, request.overflow)
         {
-            if let Some(has_changed) = self.scroll_inner_content_by(node_id, delta, request) {
-                return has_changed;
+            if let Some(outcome) = self.scroll_inner_content_by(node_id, delta, request) {
+                return outcome;
             }
         }
 
@@ -278,7 +317,10 @@ impl BaseDocument {
 
         if self.should_scroll_smoothly(target, request.behavior) {
             self.start_scroll_animation(target, end);
-            return end != current;
+            return ScrollOutcome {
+                changed: end != current,
+                unconsumed: Point::ZERO,
+            };
         }
 
         let has_changed = self.write_scroll_offset(target, end);
@@ -286,46 +328,89 @@ impl BaseDocument {
         // Transfer the delta the target could not consume to the next scroller in the chain.
         if request.overflow == ScrollOverflow::Chain {
             let contains = self.contains_scroll(target);
-            let remainder = Point {
-                x: if contains.x { 0.0 } else { unclamped.x - end.x },
-                y: if contains.y { 0.0 } else { unclamped.y - end.y },
+            let outcome = ScrollOutcome {
+                changed: has_changed,
+                unconsumed: Point {
+                    x: if contains.x { 0.0 } else { unclamped.x - end.x },
+                    y: if contains.y { 0.0 } else { unclamped.y - end.y },
+                },
             };
-            if remainder != Point::ZERO {
-                if let Some(next) = self.next_scroller_in_chain(target) {
-                    let request = ScrollRequest {
-                        target: next,
-                        amount: ScrollAmount::By(remainder),
-                        ..request
-                    };
-                    return has_changed | self.scroll(request);
-                }
-            }
+            return self.chain_unconsumed(target, outcome, request);
         }
 
-        has_changed
+        ScrollOutcome {
+            changed: has_changed,
+            unconsumed: Point::ZERO,
+        }
+    }
+
+    /// Hand what `outcome` left unconsumed on to the scroller after `target` in the chain.
+    fn chain_unconsumed(
+        &mut self,
+        target: ScrollTarget,
+        outcome: ScrollOutcome,
+        request: ScrollRequest,
+    ) -> ScrollOutcome {
+        if outcome.unconsumed == Point::ZERO {
+            return outcome;
+        }
+        let Some(next) = self.next_scroller_in_chain(target) else {
+            return outcome;
+        };
+        let request = ScrollRequest {
+            target: next,
+            amount: ScrollAmount::By(outcome.unconsumed),
+            ..request
+        };
+        outcome.then(self.scroll_outcome(request))
+    }
+
+    /// Continue a wheel scroll which the sub-document hosted by `host` left unconsumed (in
+    /// scroll offset terms) with the host's scroll ancestors, as a wheel over a node which
+    /// cannot scroll would. Returns whether anything moved.
+    pub(crate) fn chain_wheel_leftover(&mut self, host: NodeId, leftover: Point<f64>) -> bool {
+        if leftover == Point::ZERO {
+            return false;
+        }
+        let Some(next) = self.next_scroller_in_chain(ScrollTarget::Node(host)) else {
+            return false;
+        };
+        self.scroll(user_chain_request(next, leftover))
     }
 
     /// Scroll a node which scrolls content of its own rather than an overflow scrollport
     /// (a text input or a sub-document), returning `None` if the node is not such a node.
+    /// What the node cannot consume continues up the host document's chain.
     fn scroll_inner_content_by(
         &mut self,
         node_id: NodeId,
         delta: Point<f64>,
         request: ScrollRequest,
-    ) -> Option<bool> {
+    ) -> Option<ScrollOutcome> {
         let node = self.nodes.get_mut(node_id)?;
 
-        if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
+        let sub_outcome = node.subdoc_mut().map(|doc| {
+            let mut sub_doc = doc.inner_mut();
             let target = sub_doc
                 .get_hover_node_id()
                 .map_or(ScrollTarget::Viewport, ScrollTarget::Node);
-            // TODO: propagate the remaining scroll to the outer document
-            let request = ScrollRequest {
+            let inner_request = ScrollRequest {
                 target,
                 amount: ScrollAmount::By(delta),
                 ..request
             };
-            return Some(sub_doc.scroll(request));
+            sub_doc.scroll_outcome(inner_request)
+        });
+        if let Some(mut outcome) = sub_outcome {
+            // `overscroll-behavior` on the host element stops the scroll leaving the frame
+            let contains = self.nodes[node_id].contains_overscroll();
+            if contains.x {
+                outcome.unconsumed.x = 0.0;
+            }
+            if contains.y {
+                outcome.unconsumed.y = 0.0;
+            }
+            return Some(self.chain_unconsumed(ScrollTarget::Node(node_id), outcome, request));
         }
 
         // Single-line inputs scroll their text horizontally, multi-line inputs vertically.
@@ -359,18 +444,11 @@ impl BaseDocument {
             remainder.y = 0.0;
         }
 
-        if remainder != Point::ZERO {
-            if let Some(next) = self.next_scroller_in_chain(ScrollTarget::Node(node_id)) {
-                let request = ScrollRequest {
-                    target: next,
-                    amount: ScrollAmount::By(remainder),
-                    ..request
-                };
-                return Some(has_changed | self.scroll(request));
-            }
-        }
-
-        Some(has_changed)
+        let outcome = ScrollOutcome {
+            changed: has_changed,
+            unconsumed: remainder,
+        };
+        Some(self.chain_unconsumed(ScrollTarget::Node(node_id), outcome, request))
     }
 
     /// Whether `overscroll-behavior` stops scroll chaining out of `target` on the x and y axes.
@@ -515,19 +593,26 @@ impl BaseDocument {
         scroll_x: f64,
         scroll_y: f64,
     ) -> bool {
-        self.scroll(ScrollRequest {
-            target: anchor_node_id.map_or(ScrollTarget::Viewport, ScrollTarget::Node),
-            amount: ScrollAmount::By(Point {
-                x: -scroll_x,
-                y: -scroll_y,
-            }),
-            overflow: ScrollOverflow::Chain,
-            source: ScrollSource::User,
-            behavior: ScrollBehavior::Instant,
-            // A user-initiated scroll aborts any smooth scroll in progress, so that the
-            // two do not fight over the scroll offset for the rest of the animation.
-            interrupt_animation: true,
-        })
+        self.scroll_chain_outcome(anchor_node_id, scroll_x, scroll_y)
+            .changed
+    }
+
+    /// Like [`BaseDocument::scroll_chain_by`], also reporting the delta the whole chain
+    /// could not consume.
+    pub(crate) fn scroll_chain_outcome(
+        &mut self,
+        anchor_node_id: Option<NodeId>,
+        scroll_x: f64,
+        scroll_y: f64,
+    ) -> ScrollOutcome {
+        let target = anchor_node_id.map_or(ScrollTarget::Viewport, ScrollTarget::Node);
+        // A user-facing scroll delta moves the content, i.e. the opposite direction to the
+        // scroll offset.
+        let by = Point {
+            x: -scroll_x,
+            y: -scroll_y,
+        };
+        self.scroll_outcome(user_chain_request(target, by))
     }
 
     /// Duration (in milliseconds) of an animated scroll.

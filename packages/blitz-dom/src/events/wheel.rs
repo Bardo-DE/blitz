@@ -97,8 +97,10 @@ pub(crate) fn handle_wheel(doc: &mut BaseDocument, _: NodeId, event: BlitzWheelE
         WheelAxes::Vertical => (0.0, scroll_y),
     };
 
-    let has_changed = doc.scroll_chain_by(doc.get_hover_node_id(), scroll_x, scroll_y);
-    if has_changed {
+    let outcome = doc.scroll_chain_outcome(doc.get_hover_node_id(), scroll_x, scroll_y);
+    // A document hosting this one continues the scroll with what was left over
+    doc.unconsumed_wheel = outcome.unconsumed;
+    if outcome.changed {
         doc.shell_provider.request_redraw();
     }
 }
