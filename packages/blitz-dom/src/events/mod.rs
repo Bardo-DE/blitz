@@ -125,19 +125,35 @@ fn map_dom_event_to_ui_event(
 
 /// Whether an event forwarded to a sub-document or custom widget is fully handled there.
 ///
-/// Pointer events (and the click events derived from them) also take the normal
-/// pointer path on the host node, so `click` and `contextmenu` are synthesized and
-/// bubble to the host's ancestors. Keyboard, IME and wheel events stay with the
-/// forwarded target.
+/// Pointer, mouse and touch events (and the click events derived from them) also take the
+/// normal pointer path on the host node, so `click` and `contextmenu` are synthesized and
+/// bubble to the host's ancestors. Every other event (keyboard, IME, wheel, drag and drop,
+/// focus) stays with the forwarded target.
 fn ends_after_forwarding(data: &DomEventData) -> bool {
-    matches!(
+    !matches!(
         data,
-        DomEventData::KeyDown(_)
-            | DomEventData::KeyPress(_)
-            | DomEventData::KeyUp(_)
-            | DomEventData::Ime(_)
-            | DomEventData::AppleStandardKeybinding(_)
-            | DomEventData::Wheel(_)
+        DomEventData::PointerMove(_)
+            | DomEventData::PointerDown(_)
+            | DomEventData::PointerUp(_)
+            | DomEventData::PointerCancel(_)
+            | DomEventData::PointerEnter(_)
+            | DomEventData::PointerLeave(_)
+            | DomEventData::PointerOver(_)
+            | DomEventData::PointerOut(_)
+            | DomEventData::MouseMove(_)
+            | DomEventData::MouseDown(_)
+            | DomEventData::MouseUp(_)
+            | DomEventData::MouseEnter(_)
+            | DomEventData::MouseLeave(_)
+            | DomEventData::MouseOver(_)
+            | DomEventData::MouseOut(_)
+            | DomEventData::TouchStart(_)
+            | DomEventData::TouchMove(_)
+            | DomEventData::TouchEnd(_)
+            | DomEventData::TouchCancel(_)
+            | DomEventData::Click(_)
+            | DomEventData::ContextMenu(_)
+            | DomEventData::DoubleClick(_)
     )
 }
 
