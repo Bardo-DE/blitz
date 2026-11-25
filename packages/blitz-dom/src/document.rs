@@ -292,6 +292,9 @@ pub struct BaseDocument {
     pub(crate) scrollbar_activity: HashMap<NodeId, Instant>,
     /// Whether and what kind of scroll animation is currently in progress
     pub(crate) scroll_animation: ScrollAnimationState,
+    /// The viewport's scroll range after the last layout. The viewport offset is clamped only
+    /// when a layout changes it, so an embedder's out-of-range offset survives a resolve.
+    pub(crate) viewport_scroll_range: (crate::Point<f64>, crate::Point<f64>),
     /// The part of the last wheel scroll that no scroller in this document could consume,
     /// in scroll offset terms. A document hosting this one takes it with
     /// [`take_unconsumed_wheel`](Self::take_unconsumed_wheel) to continue the scroll.
@@ -562,6 +565,7 @@ impl BaseDocument {
             hovered_scrollbar: None,
             scrollbar_activity: HashMap::new(),
             scroll_animation: ScrollAnimationState::None,
+            viewport_scroll_range: (crate::Point::ZERO, crate::Point::ZERO),
             unconsumed_wheel: crate::Point::ZERO,
             held_key_commands: Vec::new(),
             pending_events: VecDeque::new(),

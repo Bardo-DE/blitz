@@ -106,7 +106,13 @@ impl BaseDocument {
 
         // Next we resolve layout with the data resolved by stlist
         self.resolve_layout();
-        self.clamp_viewport_scroll();
+        // As for nodes: clamp only when layout moved the range, so an embedder's out-of-range
+        // viewport offset (an elastic overscroll) survives a resolve.
+        let viewport_range = self.viewport_scroll_range();
+        if viewport_range != self.viewport_scroll_range {
+            self.viewport_scroll_range = viewport_range;
+            self.clamp_viewport_scroll();
+        }
         self.clamp_scroll_animation();
         timer.record_time("layout");
         self.nodes.bump_geometry_generation();

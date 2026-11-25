@@ -339,6 +339,26 @@ fn an_out_of_range_offset_survives_resolve_until_the_scroll_range_changes() {
 }
 
 #[test]
+fn an_out_of_range_viewport_offset_survives_resolve_until_the_scroll_range_changes() {
+    let mut doc = layout_doc(SCROLLER_HTML_TALL);
+    let max = 1000.0 - 200.0;
+    doc.set_viewport_scroll(blitz_dom::Point {
+        x: 0.0,
+        y: max + 50.0,
+    });
+    doc.resolve(0.0);
+    doc.resolve(0.0);
+    assert_eq!(doc.viewport_scroll().y, max + 50.0);
+
+    doc.set_viewport(Viewport::new(800, 400, 1.0, ColorScheme::Light));
+    doc.resolve(0.0);
+    assert_eq!(doc.viewport_scroll().y, 1000.0 - 400.0);
+}
+
+const SCROLLER_HTML_TALL: &str =
+    r#"<html><body style="margin:0"><div style="height:1000px"></div></body></html>"#;
+
+#[test]
 fn smooth_scroll_does_not_reverse_after_viewport_resize() {
     for (viewport_height, expected_max) in [(1900, 50.0), (400, 800.0)] {
         let mut doc = layout_doc(

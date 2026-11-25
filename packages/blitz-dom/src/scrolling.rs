@@ -235,6 +235,11 @@ impl BaseDocument {
         }
     }
 
+    pub(crate) fn viewport_scroll_range(&self) -> (Point<f64>, Point<f64>) {
+        let (_, min, max) = self.scroll_state(ScrollTarget::Viewport, false);
+        (min, max)
+    }
+
     pub(crate) fn clamp_viewport_scroll(&mut self) {
         let (current, min, max) = self.scroll_state(ScrollTarget::Viewport, false);
         let clamped = Point {
