@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 fn lines(count: u32) -> String {
     (0..count)
-        .map(|i| format!(r#"<div style="height:20px; width:180px">line {i}</div>"#))
+        .map(|i| {
+            format!(r#"<div style="height:20px; line-height:20px; width:180px">line {i}</div>"#)
+        })
         .collect()
 }
 

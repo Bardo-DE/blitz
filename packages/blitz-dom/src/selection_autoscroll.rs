@@ -287,6 +287,8 @@ impl BaseDocument {
 
         let mut active = false;
         let mut moved = false;
+        // Where the scroller that moved shows, to extend the selection into
+        let mut scrolled_rect = None;
         for axis in [Axis::X, Axis::Y] {
             for scroller in &scrollers {
                 let overshoot = scroller.rect.overshoot(axis, pointer.0, pointer.1);
@@ -317,13 +319,22 @@ impl BaseDocument {
                 if let Some(Some(changed)) = result {
                     active = true;
                     moved |= changed;
+                    scrolled_rect = Some(scroller.rect);
                     break;
                 }
             }
         }
         self.selection_autoscrolling = active;
-        if moved || active {
-            self.extend_selection_drag_to_pointer();
+        if (moved || active) && !self.extend_selection_drag_to_pointer() {
+            // The pointer is past every text there is (beside a container scrolled sideways):
+            // extend to the nearest point inside the container that scrolled, as browsers do.
+            if let Some(rect) = scrolled_rect {
+                let x = pointer
+                    .0
+                    .clamp(rect.left, (rect.right - 1.0).max(rect.left));
+                let y = pointer.1.clamp(rect.top, (rect.bottom - 1.0).max(rect.top));
+                self.extend_selection_through(&path, x, y);
+            }
         }
     }
 
