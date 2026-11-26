@@ -22,7 +22,9 @@ fn red_pixels(harness: &mut Harness) -> usize {
         height,
     );
     buffer
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 200 && px[1] < 50 && px[2] < 50)
         .count()
 }

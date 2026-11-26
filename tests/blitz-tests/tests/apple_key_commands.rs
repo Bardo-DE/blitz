@@ -29,10 +29,11 @@ impl EventHandler for Field {
         _doc: &mut dyn Document,
         state: &mut EventState,
     ) {
-        if let DomEventData::KeyDown(key) = &event.data {
-            if key.key == Key::Named(NamedKey::Enter) && self.cancel.get() {
-                state.prevent_default();
-            }
+        if let DomEventData::KeyDown(key) = &event.data
+            && key.key == Key::Named(NamedKey::Enter)
+            && self.cancel.get()
+        {
+            state.prevent_default();
         }
     }
 }
